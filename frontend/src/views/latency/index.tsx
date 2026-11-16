@@ -75,9 +75,11 @@ export default function LatencyView() {
         method: 'POST',
         body: JSON.stringify({ action }),
       })
+      const payload = await response.json()
       if (!response.ok) {
         throw new Error('延迟追踪管理动作未生效，请稍后重试')
       }
+      if (payload.message) { setErrorMessage(payload.message) }
       await reload()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '延迟追踪管理操作失败')

@@ -75,9 +75,11 @@ export default function LogView() {
         method: 'POST',
         body: JSON.stringify({ action }),
       })
+      const payload = await response.json()
       if (!response.ok) {
         throw new Error('流处理日志中心动作未生效，请稍后重试')
       }
+      if (payload.message) { setErrorMessage(payload.message) }
       await reload()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '流处理日志中心操作失败')

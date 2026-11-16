@@ -3,50 +3,48 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { request } from '@/api/client'
 
 const ENDPOINT = '/api/jobops'
+const STATE_ENDPOINT = '/api/jobstate'
 const columns = [
   "实例编号",
   "作业名称",
   "运行节点",
-  "启动时间",
-  "运行时长",
-  "异常次数",
+  "失败次数",
   "重启次数",
+  "下一重试时间",
+  "恢复位置",
   "实例状态"
 ]
 const actions = [
-  "启动作业",
-  "暂停作业",
-  "停止作业"
-]
-const statuses = [
-  "待启动",
-  "运行中",
-  "已暂停",
-  "已停止"
-]
-const stats = [
-  {
-    "label": "作业实例总数",
-    "value": 0
-  },
-  {
-    "label": "运行中作业",
-    "value": 0
-  },
-  {
-    "label": "已暂停作业",
-    "value": 0
-  }
+  "记录失败",
+  "恢复实例"
 ]
 
 type Row = Record<string, string | number | null>
+type Recovery = {
+  阶段?: string
+  说明?: string
+  下一重试时间?: string | null
+  剩余重启次数?: number | null
+  恢复位置?: string | null
+  存档版本?: number
+  来源标识?: string
+}
 
 export default function JobopsView() {
   const [rows, setRows] = useState<Row[]>([])
   const [total, setTotal] = useState(0)
+  const [waiting, setWaiting] = useState(0)
   const [errorMessage, setErrorMessage] = useState('')
   const [filters, setFilters] = useState<Record<string, string>>({})
+  const [recovery, setRecovery] = useState<Recovery | null>(null)
+  const [context, setContext] = useState<Row | null>(null)
   const filterFields = useMemo(() => columns.slice(0, 3), [])
+
+  const stats = useMemo(() => ([
+    { label: "作业实例总数", value: total },
+    { label: "运行中作业", value: rows.filter((row) => row["实例状态"] === "运行中").length },
+    { label: "等待重试作业", value: waiting },
+  ]), [total, rows, waiting])
 
   const reload = useCallback(async () => {
     setErrorMessage('')
@@ -59,6 +57,11 @@ export default function JobopsView() {
       const payload = await response.json()
       setRows(payload.items ?? [])
       setTotal(payload.total ?? 0)
+      const stateResponse = await request(`${STATE_ENDPOINT}?status=${encodeURIComponent('等待重试')}`)
+      if (stateResponse.ok) {
+        const statePayload = await stateResponse.json()
+        setWaiting(Number(statePayload.total ?? 0))
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '流作业运维列表读取失败')
     }
@@ -68,15 +71,40 @@ export default function JobopsView() {
     void reload()
   }, [reload])
 
+  async function loadRecovery(row: Row) {
+    setErrorMessage('')
+    setContext(row)
+    try {
+      const response = await request(`${ENDPOINT}/${row.id}/recovery`)
+      const payload = await response.json()
+      if (!response.ok) {
+        throw new Error(payload.detail ?? '恢复判定读取失败')
+      }
+      setRecovery(payload)
+    } catch (error) {
+      setRecovery(null)
+      setErrorMessage(error instanceof Error ? error.message : '恢复判定读取失败')
+    }
+  }
+
   async function runAction(action: string, row: Row) {
     setErrorMessage('')
     try {
+      const body = action === '记录失败'
+        ? { 运行节点: row["运行节点"], 失败原因: '页面登记失败', 请求标识: `page-${row.id}-${Date.now()}` }
+        : { 请求标识: `recover-${row.id}-${Date.now()}` }
       const response = await request(`${ENDPOINT}/${row.id}/actions`, {
         method: 'POST',
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, ...body }),
       })
+      const payload = await response.json()
       if (!response.ok) {
-        throw new Error('流作业运维动作未生效，请稍后重试')
+        throw new Error(payload.message ?? '流作业运维动作未生效，请稍后重试')
+      }
+      setErrorMessage(payload.message ?? '')
+      if (payload.result) {
+        setRecovery(payload.result)
+        setContext(row)
       }
       await reload()
     } catch (error) {
@@ -89,7 +117,7 @@ export default function JobopsView() {
       <header className="page-head">
         <div>
           <h2>流作业运维管理</h2>
-          <p className="page-desc">维护流作业的运行节点、启停管理与异常追踪，为流作业运维提供可审计的数据工程流程。</p>
+          <p className="page-desc">维护流作业的运行节点、失败记录与恢复位置，连续失败进入退避窗口后只等待，窗口结束再从剩余重启次数与最后检查点继续。</p>
         </div>
         <div className="page-actions">
           <button className="btn primary" type="button" onClick={() => setErrorMessage('作业实例登记入口尚未接入审批流')}>
@@ -137,6 +165,7 @@ export default function JobopsView() {
             <tr key={String(row.id)}>
               {columns.map((column) => <td key={column}>{row[column] ?? '—'}</td>)}
               <td className="row-actions">
+                <button className="link" type="button" onClick={() => void loadRecovery(row)}>恢复判定</button>
                 {actions.map((action) => (
                   <button key={action} className="link" type="button" onClick={() => void runAction(action, row)}>
                     {action}
@@ -152,6 +181,19 @@ export default function JobopsView() {
           )}
         </tbody>
       </table>
+
+      {recovery && (
+        <article className="stat-card" style={{ marginTop: 12 }}>
+          <span className="stat-label">
+            作业实例状态数据存档 · {context?.["实例编号"] ?? ''} · 版本 {recovery.存档版本 ?? '—'}
+          </span>
+          <p className="page-desc">
+            阶段：{recovery.阶段 ?? '—'}；下一重试时间：{recovery.下一重试时间 ?? '—'}；
+            剩余重启次数：{recovery.剩余重启次数 ?? '—'}；恢复位置：{recovery.恢复位置 ?? '—'}
+          </p>
+          <p className="page-desc">来源标识：{recovery.来源标识 ?? '—'}；{recovery.说明 ?? ''}</p>
+        </article>
+      )}
 
       <footer className="page-foot">
         <span>共 {total} 条流作业运维记录</span>

@@ -75,9 +75,11 @@ export default function UdfView() {
         method: 'POST',
         body: JSON.stringify({ action }),
       })
+      const payload = await response.json()
       if (!response.ok) {
         throw new Error('自定义函数库动作未生效，请稍后重试')
       }
+      if (payload.message) { setErrorMessage(payload.message) }
       await reload()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '自定义函数库操作失败')

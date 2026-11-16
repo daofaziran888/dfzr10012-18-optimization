@@ -75,9 +75,11 @@ export default function WindowView() {
         method: 'POST',
         body: JSON.stringify({ action }),
       })
+      const payload = await response.json()
       if (!response.ok) {
         throw new Error('窗口计算配置动作未生效，请稍后重试')
       }
+      if (payload.message) { setErrorMessage(payload.message) }
       await reload()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '窗口计算配置操作失败')

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 T = TypeVar("T")
 
@@ -19,13 +19,28 @@ class ActionResult(BaseModel):
     ok: bool
     message: str
     entry: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
 
 
 class EntryPayload(BaseModel):
-    """登记或修改一条业务记录时提交的字段集合。"""
+    """登记或修改一条业务记录时提交的字段集合。
+
+    页面历史上一直发扁平结构（`{"action": "启动作业"}`），而上层也曾按
+    `{"values": {...}}` 提交。两种写法都接受：扁平字段自动收进 values，
+    保证手里已有的调用方不用同时改。
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     values: dict[str, Any] = Field(default_factory=dict)
     remark: str | None = None
+
+    @model_validator(mode="after")
+    def _fold_flat_fields(self) -> "EntryPayload":
+        flat = self.__pydantic_extra__ or {}
+        for key, value in flat.items():
+            self.values.setdefault(key, value)
+        return self
 
 
 

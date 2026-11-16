@@ -6,10 +6,10 @@ const ENDPOINT = '/api/parallel'
 const columns = [
   "记录编号",
   "流算子名",
+  "关联实例编号",
   "当前并行度",
   "建议并行度",
-  "吞吐提升",
-  "资源成本",
+  "建议状态",
   "调优时间",
   "记录状态"
 ]
@@ -75,9 +75,11 @@ export default function ParallelView() {
         method: 'POST',
         body: JSON.stringify({ action }),
       })
+      const payload = await response.json()
       if (!response.ok) {
-        throw new Error('并行度调优动作未生效，请稍后重试')
+        throw new Error(payload.message ?? '并行度调优动作未生效，请稍后重试')
       }
+      setErrorMessage(payload.message ?? '')
       await reload()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '并行度调优操作失败')
